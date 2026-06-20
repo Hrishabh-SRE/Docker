@@ -1,0 +1,51 @@
+# Single-stage build for garuda-tower (M2 correlator).
+# Uses internal Ubuntu base + apt-installed Python (no pre-baked Python image).
+#
+# Build from the 01-garuda-tower directory:
+#   docker build -f Dockerfile2 -t garuda-tower:latest .
+#
+# Override base image if needed:
+#   --build-arg BASE_IMAGE=artifactory-ci.myntra.com/dockerhub/ubuntu_base/ubuntu:v1
+
+ARG BASE_IMAGE=io/dockerhub/ubuntu_base/ubuntu:v1
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# Tell apt to skip TLS verification (Myntra internal cert issue)
+RUN echo 'Acquire::https::Verify-Peer "false";' > /etc/apt/apt.conf.d/99insecure && \
+    echo 'Acquire::https::Verify-Host "false";' >> /etc/apt/apt.conf.d/99insecure
+
+# Install Python 3, pip, and build deps (safety net for uvloop/asyncpg wheels)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        build-essential \
+        gcc \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/share/doc/* /usr/share/man/*
+
+RUN ln -sf /usr/bin/python3 /usr/bin/python
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Copy project metadata and source
+COPY pyproject.toml .
+COPY garuda_tower ./garuda_tower
+
+# Install the package and runtime dependencies (aiokafka, asyncpg, pydantic, etc.)
+RUN pip3 install --no-cache-dir --break-system-packages \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
+    . && \
+    find / -name "*.pyc" -delete && \
+    find / -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true
+
+EXPOSE 9090
+
+# Override the base image entrypoint (/etc/init-post.sh) completely
+ENTRYPOINT []
+CMD ["garuda-tower"]
